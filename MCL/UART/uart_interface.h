@@ -1,158 +1,198 @@
-#ifndef UART_INTERFACE_H
-#define UART_INTERFACE_H
+#ifndef TIMER_INTERFACE_H
+#define TIMER_INTERFACE_H
 
 #include "../../Service/STD_Types.h"
-#include "uart_registers.h"
+#include "timer_registers.h"
 
 /* ================================================================================
- *  UART (USART) DRIVER - PUBLIC INTERFACE (ATmega32)
+ *  TIMER DRIVER - PUBLIC INTERFACE (ATmega32)
  *  ------------------------------------------------------------------------------
- *  Asynchronous serial driver. The caller describes the frame format and baud
- *  rate through a configuration structure, then uses blocking send/receive
- *  helpers for bytes and strings, or registers an RX callback for interrupt-
- *  driven reception.
+ *  This driver abstracts the three timer/counter units of the ATmega32 behind a
+ *  single, channel-based API. The caller selects a channel (Timer0/1/2), an
+ *  operating mode, and a prescaler through a configuration structure, then uses
+ *  the runtime functions to start/stop the timer, read/write its counter, set a
+ *  compare value, or register an interrupt callback.
  * ============================================================================== */
 
+/* ---------------- Timer Channels ---------------- */
 /**
- * @brief CPU clock in Hz. Used together with the requested baud rate to compute
- *        the UBRR value. Adjust to match the actual F_CPU of the target board.
- */
-#ifndef UART_F_CPU
-#define UART_F_CPU            8000000UL
-#endif
-
-/* ---------------- Common Baud Rates ---------------- */
-#define UART_BAUD_2400        2400UL
-#define UART_BAUD_4800        4800UL
-#define UART_BAUD_9600        9600UL
-#define UART_BAUD_19200       19200UL
-#define UART_BAUD_38400       38400UL
-#define UART_BAUD_57600       57600UL
-#define UART_BAUD_115200      115200UL
-
-/* ---------------- Character (Data) Size ---------------- */
-/**
- * @brief Number of data bits per frame. 9-bit mode uses the TXB8/RXB8 bits.
+ * @brief Identifies which physical timer/counter unit an API call targets.
+ *        TIMER_CHANNEL_0 and TIMER_CHANNEL_2 are 8-bit; TIMER_CHANNEL_1 is 16-bit.
  */
 typedef enum
 {
-    UART_DATA_5BITS = 0,
-    UART_DATA_6BITS = 1,
-    UART_DATA_7BITS = 2,
-    UART_DATA_8BITS = 3,   /* Most common */
-    UART_DATA_9BITS = 7
-} UART_DataSizeType;
+    TIMER_CHANNEL_0 = 0,   /* 8-bit  Timer0 */
+    TIMER_CHANNEL_1 = 1,   /* 16-bit Timer1 */
+    TIMER_CHANNEL_2 = 2,   /* 8-bit  Timer2 */
+    TIMER_CHANNEL_MAX      /* Sentinel used for range checking - not a real channel */
+} Timer_ChannelType;
 
-/* ---------------- Parity Mode ---------------- */
+/* ---------------- Operating Modes ---------------- */
 /**
- * @brief Parity bit configuration for the frame.
+ * @brief Waveform generation mode of the selected timer.
+ *  - TIMER_MODE_NORMAL       : Counter runs 0 -> TOP and overflows (TOV interrupt).
+ *  - TIMER_MODE_CTC          : Counter runs 0 -> OCR and resets (compare-match interrupt).
+ *  - TIMER_MODE_FAST_PWM     : Single-slope PWM on the OCx pin.
+ *  - TIMER_MODE_PHASE_PWM    : Dual-slope (phase-correct) PWM on the OCx pin.
  */
 typedef enum
 {
-    UART_PARITY_NONE = 0,
-    UART_PARITY_EVEN = 2,
-    UART_PARITY_ODD  = 3
-} UART_ParityType;
+    TIMER_MODE_NORMAL     = 0,
+    TIMER_MODE_CTC        = 1,
+    TIMER_MODE_FAST_PWM   = 2,
+    TIMER_MODE_PHASE_PWM  = 3
+} Timer_ModeType;
 
-/* ---------------- Stop Bits ---------------- */
+/* ---------------- Clock Prescaler ---------------- */
 /**
- * @brief Number of stop bits appended to each frame.
+ * @brief Clock source / prescaler for the timer. The numeric value matches the
+ *        CSx2:CSx0 bit pattern that is written into the control register.
+ *        TIMER_CLOCK_STOPPED disconnects the clock and effectively pauses the timer.
  */
 typedef enum
 {
-    UART_STOP_1BIT = 0,
-    UART_STOP_2BIT = 1
-} UART_StopBitType;
+    TIMER_CLOCK_STOPPED   = 0,   /* No clock source - timer stopped */
+    TIMER_CLOCK_DIV_1     = 1,   /* clk/1    (no prescaling)        */
+    TIMER_CLOCK_DIV_8     = 2,   /* clk/8                           */
+    TIMER_CLOCK_DIV_64    = 3,   /* clk/64                          */
+    TIMER_CLOCK_DIV_256   = 4,   /* clk/256                         */
+    TIMER_CLOCK_DIV_1024  = 5    /* clk/1024                        */
+} Timer_PrescalerType;
+
+/* ---------------- Interrupt Sources ---------------- */
+/**
+ * @brief Selects which timer event fires an interrupt / callback.
+ *  - TIMER_INT_OVERFLOW      : Fires when the counter overflows past TOP.
+ *  - TIMER_INT_COMPARE_MATCH : Fires when the counter equals the compare value.
+ */
+typedef enum
+{
+    TIMER_INT_OVERFLOW       = 0,
+    TIMER_INT_COMPARE_MATCH  = 1
+} Timer_InterruptType;
 
 /* ---------------- Configuration Structure ---------------- */
 /**
- * @brief Full description of the desired serial link, consumed by UART_Init().
- * @var UART_ConfigType::baudRate  Target baud rate in bits/second (e.g. UART_BAUD_9600).
- * @var UART_ConfigType::dataSize  Data bits per frame (UART_DataSizeType).
- * @var UART_ConfigType::parity    Parity mode (UART_ParityType).
- * @var UART_ConfigType::stopBits  Number of stop bits (UART_StopBitType).
+ * @brief Aggregates everything Timer_Init() needs to configure one channel.
+ * @var Timer_ConfigType::channel        Which timer unit to configure (Timer_ChannelType).
+ * @var Timer_ConfigType::mode           Waveform generation mode (Timer_ModeType).
+ * @var Timer_ConfigType::prescaler      Clock source / prescaler (Timer_PrescalerType).
+ * @var Timer_ConfigType::initialValue   Value preloaded into the counter register (TCNTx).
+ * @var Timer_ConfigType::compareValue   Value written to the compare register (OCRx),
+ *                                        used in CTC / PWM modes and for compare interrupts.
  */
 typedef struct
 {
-    uint32_h          baudRate;
-    UART_DataSizeType dataSize;
-    UART_ParityType   parity;
-    UART_StopBitType  stopBits;
-} UART_ConfigType;
+    Timer_ChannelType   channel;
+    Timer_ModeType      mode;
+    Timer_PrescalerType prescaler;
+    uint16_h            initialValue;
+    uint16_h            compareValue;
+} Timer_ConfigType;
 
 /* ---------------- Callback Pointer Type ---------------- */
 /**
- * @brief Type of the RX-complete callback. Receives the byte just read from UDR.
- *        Runs in interrupt context - keep it short.
+ * @brief Type of the user function invoked from the timer ISR.
+ *        Keep the callback short and non-blocking - it runs in interrupt context.
  */
-typedef void (*UART_RxCallBackType)(uint8_h receivedByte);
+typedef void (*Timer_CallBackType)(void);
 
 /* ================================================================================
  *  FUNCTION PROTOTYPES
  * ============================================================================== */
 
 /**
- * @brief  Initializes the USART: computes and loads UBRR from baudRate, selects
- *         the frame format (data size / parity / stop bits), and enables the
- *         transmitter and receiver in asynchronous mode.
- * @param  addConfig  Pointer to a populated configuration structure.
- * @return STD_ReturnType  E_OK on success, E_NOK on NULL pointer / invalid field.
+ * @brief  Configures a timer channel (mode, prescaler, initial + compare values)
+ *         without starting it. Loads TCNTx/OCRx and selects the waveform mode.
+ * @param  addConfig  Pointer to a fully populated configuration structure.
+ * @return STD_ReturnType  E_OK if configured, E_NOK on NULL pointer or bad channel.
+ * @note   The clock is applied here; pass TIMER_CLOCK_STOPPED and call Timer_Start()
+ *         later if you want to defer the actual counting.
  */
-STD_ReturnType UART_Init(const UART_ConfigType *addConfig);
+STD_ReturnType Timer_Init(const Timer_ConfigType *addConfig);
 
 /**
- * @brief  Disables the transmitter and receiver.
+ * @brief  Stops the channel and restores its control registers to reset values.
+ * @param  channel  Timer channel to de-initialize.
+ * @return STD_ReturnType  E_OK/E_NOK (E_NOK on invalid channel).
+ */
+STD_ReturnType Timer_DeInit(Timer_ChannelType channel);
+
+/**
+ * @brief  (Re)connects the clock source so the selected channel starts counting.
+ * @param  channel    Timer channel to start.
+ * @param  prescaler  Clock source / prescaler to apply.
  * @return STD_ReturnType  E_OK/E_NOK.
  */
-STD_ReturnType UART_DeInit(void);
+STD_ReturnType Timer_Start(Timer_ChannelType channel, Timer_PrescalerType prescaler);
 
 /**
- * @brief  Blocking send of a single byte: waits for the data register to be empty,
- *         then writes the byte to UDR.
- * @param  uint8Data  Byte to transmit.
- * @return STD_ReturnType  E_OK when the byte has been handed to the hardware.
- */
-STD_ReturnType UART_SendByte(uint8_h uint8Data);
-
-/**
- * @brief  Blocking receive of a single byte: waits for a complete frame, then
- *         returns it through the pointer.
- * @param  puint8Data  Pointer that receives the read byte; must not be NULL.
- * @return STD_ReturnType  E_OK/E_NOK (E_NOK on NULL pointer).
- */
-STD_ReturnType UART_ReceiveByte(uint8_h *puint8Data);
-
-/**
- * @brief  Non-blocking receive: returns immediately with the byte if one is ready.
- * @param  puint8Data  Pointer that receives the byte when available.
- * @return STD_ReturnType  E_OK if a byte was read, E_NOK if none was available
- *                         (or on NULL pointer).
- */
-STD_ReturnType UART_ReceiveByteNonBlocking(uint8_h *puint8Data);
-
-/**
- * @brief  Sends a NUL-terminated string byte-by-byte (blocking).
- * @param  pString  Pointer to a '\0'-terminated C string; must not be NULL.
+ * @brief  Disconnects the clock source so the channel stops counting (value kept).
+ * @param  channel  Timer channel to stop.
  * @return STD_ReturnType  E_OK/E_NOK.
  */
-STD_ReturnType UART_SendString(const uint8_h *pString);
+STD_ReturnType Timer_Stop(Timer_ChannelType channel);
 
 /**
- * @brief  Receives characters into 'buffer' until the terminator byte is seen or
- *         (maxLength-1) characters have been stored; always NUL-terminates.
- * @param  buffer      Destination buffer; must not be NULL.
- * @param  maxLength   Size of 'buffer' in bytes (including room for the '\0').
- * @param  terminator  Byte that ends reception (e.g. '\n' or '\r').
+ * @brief  Writes the counter register (TCNTx) of the selected channel.
+ * @param  channel  Timer channel.
+ * @param  value    New counter value (8-bit for Timer0/2, 16-bit for Timer1).
  * @return STD_ReturnType  E_OK/E_NOK.
  */
-STD_ReturnType UART_ReceiveString(uint8_h *buffer, uint16_h maxLength, uint8_h terminator);
+STD_ReturnType Timer_SetCounterValue(Timer_ChannelType channel, uint16_h value);
 
 /**
- * @brief  Registers the callback fired on each RX-complete interrupt and enables
- *         the RXC interrupt. The caller must also enable global interrupts.
- * @param  callBack  Pointer to a void(uint8_h) function; must not be NULL.
+ * @brief  Reads the current counter register (TCNTx) of the selected channel.
+ * @param  channel     Timer channel.
+ * @param  puint16Val  Pointer that receives the current counter value.
+ * @return STD_ReturnType  E_OK/E_NOK (E_NOK on NULL pointer or bad channel).
+ */
+STD_ReturnType Timer_GetCounterValue(Timer_ChannelType channel, uint16_h *puint16Val);
+
+/**
+ * @brief  Writes the output-compare register (OCRx) used in CTC / PWM modes.
+ * @param  channel  Timer channel.
+ * @param  value    Compare value (8-bit for Timer0/2, 16-bit for Timer1 channel A).
  * @return STD_ReturnType  E_OK/E_NOK.
  */
-STD_ReturnType UART_SetRxCallBack(UART_RxCallBackType callBack);
+STD_ReturnType Timer_SetCompareValue(Timer_ChannelType channel, uint16_h value);
 
-#endif /* UART_INTERFACE_H */
+/**
+ * @brief  Enables the given interrupt source for the channel (updates TIMSK).
+ *         The user must also enable global interrupts (see Timer_EnableGlobalInterrupt).
+ * @param  channel   Timer channel.
+ * @param  intType   Overflow or compare-match interrupt.
+ * @return STD_ReturnType  E_OK/E_NOK.
+ */
+STD_ReturnType Timer_EnableInterrupt(Timer_ChannelType channel, Timer_InterruptType intType);
+
+/**
+ * @brief  Disables the given interrupt source for the channel (updates TIMSK).
+ * @param  channel   Timer channel.
+ * @param  intType   Overflow or compare-match interrupt.
+ * @return STD_ReturnType  E_OK/E_NOK.
+ */
+STD_ReturnType Timer_DisableInterrupt(Timer_ChannelType channel, Timer_InterruptType intType);
+
+/**
+ * @brief  Registers the callback invoked from the channel's ISR for a given source.
+ * @param  channel   Timer channel.
+ * @param  intType   Which event the callback belongs to (overflow / compare).
+ * @param  callBack  Pointer to a void(void) function; must not be NULL.
+ * @return STD_ReturnType  E_OK/E_NOK.
+ */
+STD_ReturnType Timer_SetCallBack(Timer_ChannelType channel,
+                                 Timer_InterruptType intType,
+                                 Timer_CallBackType callBack);
+
+/**
+ * @brief  Sets the global interrupt enable bit (I-bit of SREG). Equivalent to sei().
+ */
+void Timer_EnableGlobalInterrupt(void);
+
+/**
+ * @brief  Clears the global interrupt enable bit (I-bit of SREG). Equivalent to cli().
+ */
+void Timer_DisableGlobalInterrupt(void);
+
+#endif /* TIMER_INTERFACE_H */

@@ -1,198 +1,108 @@
-#ifndef TIMER_INTERFACE_H
-#define TIMER_INTERFACE_H
+#ifndef TIMER_REGISTERS_H
+#define TIMER_REGISTERS_H
 
 #include "../../Service/STD_Types.h"
-#include "timer_registers.h"
 
 /* ================================================================================
- *  TIMER DRIVER - PUBLIC INTERFACE (ATmega32)
+ *  ATmega32 TIMER / COUNTER REGISTER MAP
  *  ------------------------------------------------------------------------------
- *  This driver abstracts the three timer/counter units of the ATmega32 behind a
- *  single, channel-based API. The caller selects a channel (Timer0/1/2), an
- *  operating mode, and a prescaler through a configuration structure, then uses
- *  the runtime functions to start/stop the timer, read/write its counter, set a
- *  compare value, or register an interrupt callback.
+ *  All addresses below are the data-memory addresses (I/O address + 0x20).
+ *  The device has three timer/counter units:
+ *      - Timer0 : 8-bit
+ *      - Timer1 : 16-bit (two compare units A/B + input capture)
+ *      - Timer2 : 8-bit (can also run asynchronously from a 32.768kHz crystal)
  * ============================================================================== */
 
-/* ---------------- Timer Channels ---------------- */
-/**
- * @brief Identifies which physical timer/counter unit an API call targets.
- *        TIMER_CHANNEL_0 and TIMER_CHANNEL_2 are 8-bit; TIMER_CHANNEL_1 is 16-bit.
- */
-typedef enum
-{
-    TIMER_CHANNEL_0 = 0,   /* 8-bit  Timer0 */
-    TIMER_CHANNEL_1 = 1,   /* 16-bit Timer1 */
-    TIMER_CHANNEL_2 = 2,   /* 8-bit  Timer2 */
-    TIMER_CHANNEL_MAX      /* Sentinel used for range checking - not a real channel */
-} Timer_ChannelType;
+/* ---------------- Timer0 (8-bit) ---------------- */
+#define TIMER_TCCR0_REG    (*(volatile u8 *)0x53)   /* Timer0 Control Register            */
+#define TIMER_TCNT0_REG    (*(volatile u8 *)0x52)   /* Timer0 Counter Value Register      */
+#define TIMER_OCR0_REG     (*(volatile u8 *)0x5C)   /* Timer0 Output Compare Register     */
 
-/* ---------------- Operating Modes ---------------- */
-/**
- * @brief Waveform generation mode of the selected timer.
- *  - TIMER_MODE_NORMAL       : Counter runs 0 -> TOP and overflows (TOV interrupt).
- *  - TIMER_MODE_CTC          : Counter runs 0 -> OCR and resets (compare-match interrupt).
- *  - TIMER_MODE_FAST_PWM     : Single-slope PWM on the OCx pin.
- *  - TIMER_MODE_PHASE_PWM    : Dual-slope (phase-correct) PWM on the OCx pin.
- */
-typedef enum
-{
-    TIMER_MODE_NORMAL     = 0,
-    TIMER_MODE_CTC        = 1,
-    TIMER_MODE_FAST_PWM   = 2,
-    TIMER_MODE_PHASE_PWM  = 3
-} Timer_ModeType;
+/* TCCR0 bit positions */
+#define TIMER_CS00_BIT     0    /* Clock Select bit 0 (CS02:CS00 = prescaler) */
+#define TIMER_CS01_BIT     1    /* Clock Select bit 1                         */
+#define TIMER_CS02_BIT     2    /* Clock Select bit 2                         */
+#define TIMER_WGM01_BIT    3    /* Waveform Generation Mode bit 1             */
+#define TIMER_COM00_BIT    4    /* Compare Output Mode bit 0                  */
+#define TIMER_COM01_BIT    5    /* Compare Output Mode bit 1                  */
+#define TIMER_WGM00_BIT    6    /* Waveform Generation Mode bit 0             */
+#define TIMER_FOC0_BIT     7    /* Force Output Compare                       */
 
-/* ---------------- Clock Prescaler ---------------- */
-/**
- * @brief Clock source / prescaler for the timer. The numeric value matches the
- *        CSx2:CSx0 bit pattern that is written into the control register.
- *        TIMER_CLOCK_STOPPED disconnects the clock and effectively pauses the timer.
- */
-typedef enum
-{
-    TIMER_CLOCK_STOPPED   = 0,   /* No clock source - timer stopped */
-    TIMER_CLOCK_DIV_1     = 1,   /* clk/1    (no prescaling)        */
-    TIMER_CLOCK_DIV_8     = 2,   /* clk/8                           */
-    TIMER_CLOCK_DIV_64    = 3,   /* clk/64                          */
-    TIMER_CLOCK_DIV_256   = 4,   /* clk/256                         */
-    TIMER_CLOCK_DIV_1024  = 5    /* clk/1024                        */
-} Timer_PrescalerType;
+/* ---------------- Timer1 (16-bit) ---------------- */
+#define TIMER_TCCR1A_REG   (*(volatile u8  *)0x4F)  /* Timer1 Control Register A          */
+#define TIMER_TCCR1B_REG   (*(volatile u8  *)0x4E)  /* Timer1 Control Register B          */
+#define TIMER_TCNT1_REG    (*(volatile u16 *)0x4C)  /* Timer1 Counter (16-bit combined)   */
+#define TIMER_TCNT1L_REG   (*(volatile u8  *)0x4C)  /* Timer1 Counter low byte            */
+#define TIMER_TCNT1H_REG   (*(volatile u8  *)0x4D)  /* Timer1 Counter high byte           */
+#define TIMER_OCR1A_REG    (*(volatile u16 *)0x4A)  /* Timer1 Output Compare A (16-bit)   */
+#define TIMER_OCR1B_REG    (*(volatile u16 *)0x48)  /* Timer1 Output Compare B (16-bit)   */
+#define TIMER_ICR1_REG     (*(volatile u16 *)0x46)  /* Timer1 Input Capture (16-bit)      */
 
-/* ---------------- Interrupt Sources ---------------- */
-/**
- * @brief Selects which timer event fires an interrupt / callback.
- *  - TIMER_INT_OVERFLOW      : Fires when the counter overflows past TOP.
- *  - TIMER_INT_COMPARE_MATCH : Fires when the counter equals the compare value.
- */
-typedef enum
-{
-    TIMER_INT_OVERFLOW       = 0,
-    TIMER_INT_COMPARE_MATCH  = 1
-} Timer_InterruptType;
+/* TCCR1A bit positions */
+#define TIMER_WGM10_BIT    0
+#define TIMER_WGM11_BIT    1
+#define TIMER_FOC1B_BIT    2
+#define TIMER_FOC1A_BIT    3
+#define TIMER_COM1B0_BIT   4
+#define TIMER_COM1B1_BIT   5
+#define TIMER_COM1A0_BIT   6
+#define TIMER_COM1A1_BIT   7
 
-/* ---------------- Configuration Structure ---------------- */
-/**
- * @brief Aggregates everything Timer_Init() needs to configure one channel.
- * @var Timer_ConfigType::channel        Which timer unit to configure (Timer_ChannelType).
- * @var Timer_ConfigType::mode           Waveform generation mode (Timer_ModeType).
- * @var Timer_ConfigType::prescaler      Clock source / prescaler (Timer_PrescalerType).
- * @var Timer_ConfigType::initialValue   Value preloaded into the counter register (TCNTx).
- * @var Timer_ConfigType::compareValue   Value written to the compare register (OCRx),
- *                                        used in CTC / PWM modes and for compare interrupts.
- */
-typedef struct
-{
-    Timer_ChannelType   channel;
-    Timer_ModeType      mode;
-    Timer_PrescalerType prescaler;
-    uint16_h            initialValue;
-    uint16_h            compareValue;
-} Timer_ConfigType;
+/* TCCR1B bit positions */
+#define TIMER_CS10_BIT     0    /* Clock Select bit 0 (CS12:CS10 = prescaler) */
+#define TIMER_CS11_BIT     1
+#define TIMER_CS12_BIT     2
+#define TIMER_WGM12_BIT    3
+#define TIMER_WGM13_BIT    4
+#define TIMER_ICES1_BIT    6    /* Input Capture Edge Select                  */
+#define TIMER_ICNC1_BIT    7    /* Input Capture Noise Canceler               */
 
-/* ---------------- Callback Pointer Type ---------------- */
-/**
- * @brief Type of the user function invoked from the timer ISR.
- *        Keep the callback short and non-blocking - it runs in interrupt context.
- */
-typedef void (*Timer_CallBackType)(void);
+/* ---------------- Timer2 (8-bit) ---------------- */
+#define TIMER_TCCR2_REG    (*(volatile u8 *)0x45)   /* Timer2 Control Register            */
+#define TIMER_TCNT2_REG    (*(volatile u8 *)0x44)   /* Timer2 Counter Value Register      */
+#define TIMER_OCR2_REG     (*(volatile u8 *)0x43)   /* Timer2 Output Compare Register     */
+#define TIMER_ASSR_REG     (*(volatile u8 *)0x42)   /* Timer2 Asynchronous Status Register*/
 
-/* ================================================================================
- *  FUNCTION PROTOTYPES
- * ============================================================================== */
+/* TCCR2 bit positions */
+#define TIMER_CS20_BIT     0    /* Clock Select bit 0 (CS22:CS20 = prescaler) */
+#define TIMER_CS21_BIT     1
+#define TIMER_CS22_BIT     2
+#define TIMER_WGM21_BIT    3
+#define TIMER_COM20_BIT    4
+#define TIMER_COM21_BIT    5
+#define TIMER_WGM20_BIT    6
+#define TIMER_FOC2_BIT     7
 
-/**
- * @brief  Configures a timer channel (mode, prescaler, initial + compare values)
- *         without starting it. Loads TCNTx/OCRx and selects the waveform mode.
- * @param  addConfig  Pointer to a fully populated configuration structure.
- * @return STD_ReturnType  E_OK if configured, E_NOK on NULL pointer or bad channel.
- * @note   The clock is applied here; pass TIMER_CLOCK_STOPPED and call Timer_Start()
- *         later if you want to defer the actual counting.
- */
-STD_ReturnType Timer_Init(const Timer_ConfigType *addConfig);
+/* ---------------- Shared Interrupt Registers ---------------- */
+#define TIMER_TIMSK_REG    (*(volatile u8 *)0x59)   /* Timer/Counter Interrupt Mask Register  */
+#define TIMER_TIFR_REG     (*(volatile u8 *)0x58)   /* Timer/Counter Interrupt Flag Register  */
+#define TIMER_SREG_REG     (*(volatile u8 *)0x5F)   /* Status Register (global interrupt bit) */
 
-/**
- * @brief  Stops the channel and restores its control registers to reset values.
- * @param  channel  Timer channel to de-initialize.
- * @return STD_ReturnType  E_OK/E_NOK (E_NOK on invalid channel).
- */
-STD_ReturnType Timer_DeInit(Timer_ChannelType channel);
+/* TIMSK bit positions */
+#define TIMER_TOIE0_BIT    0    /* Timer0 Overflow Interrupt Enable        */
+#define TIMER_OCIE0_BIT    1    /* Timer0 Output Compare Match Int Enable   */
+#define TIMER_TOIE1_BIT    2    /* Timer1 Overflow Interrupt Enable        */
+#define TIMER_OCIE1B_BIT   3    /* Timer1 Compare B Match Interrupt Enable  */
+#define TIMER_OCIE1A_BIT   4    /* Timer1 Compare A Match Interrupt Enable  */
+#define TIMER_TICIE1_BIT   5    /* Timer1 Input Capture Interrupt Enable    */
+#define TIMER_TOIE2_BIT    6    /* Timer2 Overflow Interrupt Enable        */
+#define TIMER_OCIE2_BIT    7    /* Timer2 Output Compare Match Int Enable   */
 
-/**
- * @brief  (Re)connects the clock source so the selected channel starts counting.
- * @param  channel    Timer channel to start.
- * @param  prescaler  Clock source / prescaler to apply.
- * @return STD_ReturnType  E_OK/E_NOK.
- */
-STD_ReturnType Timer_Start(Timer_ChannelType channel, Timer_PrescalerType prescaler);
+/* TIFR bit positions (write 1 to clear the flag) */
+#define TIMER_TOV0_BIT     0    /* Timer0 Overflow Flag        */
+#define TIMER_OCF0_BIT     1    /* Timer0 Output Compare Flag   */
+#define TIMER_TOV1_BIT     2    /* Timer1 Overflow Flag        */
+#define TIMER_OCF1B_BIT    3    /* Timer1 Compare B Flag        */
+#define TIMER_OCF1A_BIT    4    /* Timer1 Compare A Flag        */
+#define TIMER_ICF1_BIT     5    /* Timer1 Input Capture Flag    */
+#define TIMER_TOV2_BIT     6    /* Timer2 Overflow Flag        */
+#define TIMER_OCF2_BIT     7    /* Timer2 Output Compare Flag   */
 
-/**
- * @brief  Disconnects the clock source so the channel stops counting (value kept).
- * @param  channel  Timer channel to stop.
- * @return STD_ReturnType  E_OK/E_NOK.
- */
-STD_ReturnType Timer_Stop(Timer_ChannelType channel);
+#define TIMER_GLOBAL_INT_BIT   7    /* I-bit inside SREG (global interrupt enable) */
 
-/**
- * @brief  Writes the counter register (TCNTx) of the selected channel.
- * @param  channel  Timer channel.
- * @param  value    New counter value (8-bit for Timer0/2, 16-bit for Timer1).
- * @return STD_ReturnType  E_OK/E_NOK.
- */
-STD_ReturnType Timer_SetCounterValue(Timer_ChannelType channel, uint16_h value);
+/* Resolution helpers */
+#define TIMER0_MAX_COUNT   255U      /* 8-bit timer top value  */
+#define TIMER1_MAX_COUNT   65535U    /* 16-bit timer top value */
+#define TIMER2_MAX_COUNT   255U      /* 8-bit timer top value  */
 
-/**
- * @brief  Reads the current counter register (TCNTx) of the selected channel.
- * @param  channel     Timer channel.
- * @param  puint16Val  Pointer that receives the current counter value.
- * @return STD_ReturnType  E_OK/E_NOK (E_NOK on NULL pointer or bad channel).
- */
-STD_ReturnType Timer_GetCounterValue(Timer_ChannelType channel, uint16_h *puint16Val);
-
-/**
- * @brief  Writes the output-compare register (OCRx) used in CTC / PWM modes.
- * @param  channel  Timer channel.
- * @param  value    Compare value (8-bit for Timer0/2, 16-bit for Timer1 channel A).
- * @return STD_ReturnType  E_OK/E_NOK.
- */
-STD_ReturnType Timer_SetCompareValue(Timer_ChannelType channel, uint16_h value);
-
-/**
- * @brief  Enables the given interrupt source for the channel (updates TIMSK).
- *         The user must also enable global interrupts (see Timer_EnableGlobalInterrupt).
- * @param  channel   Timer channel.
- * @param  intType   Overflow or compare-match interrupt.
- * @return STD_ReturnType  E_OK/E_NOK.
- */
-STD_ReturnType Timer_EnableInterrupt(Timer_ChannelType channel, Timer_InterruptType intType);
-
-/**
- * @brief  Disables the given interrupt source for the channel (updates TIMSK).
- * @param  channel   Timer channel.
- * @param  intType   Overflow or compare-match interrupt.
- * @return STD_ReturnType  E_OK/E_NOK.
- */
-STD_ReturnType Timer_DisableInterrupt(Timer_ChannelType channel, Timer_InterruptType intType);
-
-/**
- * @brief  Registers the callback invoked from the channel's ISR for a given source.
- * @param  channel   Timer channel.
- * @param  intType   Which event the callback belongs to (overflow / compare).
- * @param  callBack  Pointer to a void(void) function; must not be NULL.
- * @return STD_ReturnType  E_OK/E_NOK.
- */
-STD_ReturnType Timer_SetCallBack(Timer_ChannelType channel,
-                                 Timer_InterruptType intType,
-                                 Timer_CallBackType callBack);
-
-/**
- * @brief  Sets the global interrupt enable bit (I-bit of SREG). Equivalent to sei().
- */
-void Timer_EnableGlobalInterrupt(void);
-
-/**
- * @brief  Clears the global interrupt enable bit (I-bit of SREG). Equivalent to cli().
- */
-void Timer_DisableGlobalInterrupt(void);
-
-#endif /* TIMER_INTERFACE_H */
+#endif /* TIMER_REGISTERS_H */
