@@ -1,45 +1,89 @@
+#include "../Service/STD_Types.h"
 #include "../Service/Bit_Math.h"
 #include "../MCL/GPIO/gpio_interface.h"
 #include "../MCL/GPIO/gpio_registers.h"
-#include "../MCL/Interrupt/interrupt_interface.h"
+#include "../MCL/UART/uart_interface.h"
 
 /*
- * External interrupt test:
- *   - INT0 (pin PD2) is configured for a falling-edge trigger.
- *   - The LED on PORTA pin 2 (PA2) toggles every time the interrupt fires.
+ * UART test application.
  *
- * Wiring: drive PD2 from a push button. With the internal pull-up enabled,
- * PD2 idles high and a button press pulls it low -> falling edge -> ISR.
+ * Wiring:
+ *   LED   -> PORTA PIN0 (through a series resistor to GND, active high)
+ *   UART  -> PD0 (RXD) / PD1 (TXD), 9600 baud, 8N1
+ *
+ * Behaviour:
+ *   - Receiving '1' turns the LED ON,  receiving '0' turns it OFF.
+ *   - After every change the board prints the LED state back on the UART:
+ *         "1" while the LED is on, "0" while it is off.
+ *   - Any other character is rejected with a short hint.
  */
 
-/* Callback executed from the INT0 ISR - keep it short. */
-static void INT0_Handler(void)
+#define LED_PORT        GPIO_PORTA
+#define LED_PIN         GPIO_PIN0
+
+#define LED_ON_CHAR     '1'
+#define LED_OFF_CHAR    '0'
+
+/* Sends the current LED state as a single character line: "1" or "0". */
+static void PrintLedState(uint8_h uint8State)
 {
-    GPIO_PinToggle(GPIO_PORTA, GPIO_PIN2);
+    (void)UART_SendByte(uint8State ? LED_ON_CHAR : LED_OFF_CHAR);
+    (void)UART_SendString((const uint8_h *)"\r\n");
 }
 
 int main(void)
 {
-    EXTI_ConfigType int0Config = { EXTI_INT0, EXTI_SENSE_ANY_CHANGE };
+    UART_ConfigType uartConfig =
+    {
+        UART_BAUD_9600,     /* baudRate : 9600 bps                */
+        UART_DATA_8BITS,    /* dataSize : 8 data bits             */
+        UART_PARITY_NONE,   /* parity   : no parity bit           */
+        UART_STOP_1BIT      /* stopBits : 1 stop bit  -> 8N1      */
+    };
 
-    /* LED on PA2 as output, start off. */
-    GPIO_SetPinDirection(GPIO_PORTA, GPIO_PIN2, GPIO_OUTPUT);
-    GPIO_SetPinValue(GPIO_PORTA, GPIO_PIN2, 0);
+    uint8_h ledState = 0U;   /* 0 = off, 1 = on */
+    uint8_h rxByte   = 0U;
 
-    /* INT0 source pin PD2 as input with internal pull-up enabled. */
-    GPIO_SetPinDirection(GPIO_PORTD, GPIO_PIN2, GPIO_INPUT);
-    GPIO_SetPinValue(GPIO_PORTD, GPIO_PIN2, 1);   /* PORTD.2 = 1 -> pull-up */
+    /* LED pin as output, starting in the OFF state. */
+    (void)GPIO_SetPinDirection(LED_PORT, LED_PIN, GPIO_OUTPUT);
+    (void)GPIO_SetPinValue(LED_PORT, LED_PIN, PIN_LOW);
 
-    /* Register the handler, then configure + enable the line. */
-    EXTI_SetCallBack(EXTI_INT0, INT0_Handler);
-    EXTI_Init(&int0Config);
+    (void)UART_Init(&uartConfig);
 
-    /* Allow interrupts to be serviced. */
-    EXTI_EnableGlobalInterrupt();
+    (void)UART_SendString((const uint8_h *)"LED control ready: send 1 = ON, 0 = OFF\r\n");
+    PrintLedState(ledState);   /* report the initial state */
 
     while (1)
     {
+        /* Blocks until a character arrives from the terminal. */
+        if (UART_ReceiveByte(&rxByte) != E_OK)
+        {
+            continue;
+        }
 
+        switch (rxByte)
+        {
+            case LED_ON_CHAR:
+                ledState = 1U;
+                (void)GPIO_SetPinValue(LED_PORT, LED_PIN, PIN_HIGH);
+                PrintLedState(ledState);
+                break;
+
+            case LED_OFF_CHAR:
+                ledState = 0U;
+                (void)GPIO_SetPinValue(LED_PORT, LED_PIN, PIN_LOW);
+                PrintLedState(ledState);
+                break;
+
+            case '\r':
+            case '\n':
+                /* Ignore the line endings a terminal appends after the digit. */
+                break;
+
+            default:
+                (void)UART_SendString((const uint8_h *)"Send 1 or 0\r\n");
+                break;
+        }
     }
 
     return 0;
