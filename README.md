@@ -86,7 +86,7 @@ SmartHome_Project/
 - Tool: SimulIDE
 - Project file: smarthome.siml
 - Use SimulIDE to simulate the ATmega32 microcontroller and connected peripheral modules.
-
+  
 ## Build & Run Instructions
 
 ### Prerequisites
@@ -109,6 +109,7 @@ make flash
 ```
 
 For simulation, open the smarthome.siml file in SimulIDE and load the generated firmware binary or hex output.
+<img width="1018" height="727" alt="image" src="https://github.com/user-attachments/assets/df27c1a8-8732-4443-86c7-28b4c34e1728" />
 
 ## Conclusion
 

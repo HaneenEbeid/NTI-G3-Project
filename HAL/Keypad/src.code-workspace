@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "../../src"
+		},
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../MCL"
+		},
+		{
+			"path": "../../build"
+		},
+		{
+			"path": "../../.vscode"
+		},
+		{
+			"path": "../../LOGIC"
+		},
+		{
+			"path": "../../Service"
+		}
+	]
+}
