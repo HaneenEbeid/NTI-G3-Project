@@ -100,6 +100,7 @@ Run the following command from the project root:
 ```bash
 make
 ```
+<img width="1600" height="900" alt="WhatsApp Image 2026-07-30 at 9 02 23 AM" src="https://github.com/user-attachments/assets/6fb1a367-740c-43b8-8c42-006145a5288b" />
 
 ### Flash / Run
 If you are using hardware programming:
