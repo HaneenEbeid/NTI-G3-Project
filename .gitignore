@@ -24,3 +24,6 @@
 *.exe
 *.axf
 *.asm
+build/
+*.hex
+*.elf
